@@ -8,10 +8,8 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
-type TxFunc func(ctx context.Context) error
-
 type TxManager interface {
-	Do(ctx context.Context, fn TxFunc) error
+	Do(ctx context.Context, fn func(ctx context.Context) error) error
 }
 
 type manager struct {
@@ -24,8 +22,8 @@ func NewTxManager(pool *pgxpool.Pool) TxManager {
 
 type txKey struct{}
 
-func (m *manager) Do(ctx context.Context, fn TxFunc) error {
-	if _, ok := GetTransaction(ctx); ok {
+func (m *manager) Do(ctx context.Context, fn func(ctx context.Context) error) error {
+	if _, ok := getTransaction(ctx); ok {
 		return fn(ctx)
 	}
 
@@ -54,7 +52,7 @@ func (m *manager) Do(ctx context.Context, fn TxFunc) error {
 	return nil
 }
 
-func GetTransaction(ctx context.Context) (pgx.Tx, bool) {
+func getTransaction(ctx context.Context) (pgx.Tx, bool) {
 	tx, ok := ctx.Value(txKey{}).(pgx.Tx)
 	return tx, ok
 }

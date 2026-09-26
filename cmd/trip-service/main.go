@@ -7,12 +7,10 @@ import (
 	"os"
 	"os/signal"
 	"syscall"
-	"time"
 
 	"github.com/sonjiwu2/tripgo/internal/config"
 	"github.com/sonjiwu2/tripgo/internal/httpapi"
 	"github.com/sonjiwu2/tripgo/internal/postgres"
-	"github.com/sonjiwu2/tripgo/internal/trip"
 )
 
 func main() {
@@ -35,15 +33,15 @@ func main() {
 	}
 	defer pool.Close()
 
-	repo := trip.NewRepo(pool)
-	handler := httpapi.NewHandler(repo, postgres.NewTxManager(pool), pool)
+	repo := postgres.NewRepo(pool, cfg.DB.QueryTimeout)
+	handler := httpapi.NewHandler(repo, postgres.NewTxManager(pool), pool, cfg.DB.QueryTimeout)
 	server := &http.Server{
 		Addr:              cfg.HTTP.Addr,
 		Handler:           httpapi.Routes(handler),
-		ReadTimeout:       5 * time.Second,
-		ReadHeaderTimeout: 5 * time.Second,
-		WriteTimeout:      10 * time.Second,
-		IdleTimeout:       60 * time.Second,
+		ReadTimeout:       cfg.HTTP.ReadTimeout,
+		ReadHeaderTimeout: cfg.HTTP.ReadHeaderTimeout,
+		WriteTimeout:      cfg.HTTP.WriteTimeout,
+		IdleTimeout:       cfg.HTTP.IdleTimeout,
 	}
 
 	listenErr := make(chan error, 1)
@@ -57,6 +55,7 @@ func main() {
 	case err := <-listenErr:
 		if err != nil && err != http.ErrServerClosed {
 			slog.Error("сервер не запустился", "err", err)
+			os.Exit(1)
 		}
 		return
 	}
@@ -65,6 +64,8 @@ func main() {
 	shutdownCtx, cancel := context.WithTimeout(context.Background(), cfg.HTTP.ShutdownTimeout)
 	defer cancel()
 	if err := server.Shutdown(shutdownCtx); err != nil {
-		slog.Error("не дождался завершения запросов", "err", err)
+		slog.Error("не уложились в SHUTDOWN_TIMEOUT, обрываю соединения", "err", err)
+		_ = server.Close()
+		os.Exit(1)
 	}
 }

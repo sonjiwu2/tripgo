@@ -5,7 +5,10 @@ import (
 	"encoding/json"
 	"errors"
 	"io"
+	"log/slog"
 	"net/http"
+	"strings"
+	"time"
 
 	"github.com/go-chi/chi/v5"
 	"github.com/google/uuid"
@@ -18,13 +21,14 @@ import (
 )
 
 type Handler struct {
-	repo *trip.Repo
-	tx   postgres.TxManager
-	pool *pgxpool.Pool
+	repo         *postgres.Repo
+	tx           postgres.TxManager
+	pool         *pgxpool.Pool
+	queryTimeout time.Duration
 }
 
-func NewHandler(repo *trip.Repo, tx postgres.TxManager, pool *pgxpool.Pool) *Handler {
-	return &Handler{repo: repo, tx: tx, pool: pool}
+func NewHandler(repo *postgres.Repo, tx postgres.TxManager, pool *pgxpool.Pool, queryTimeout time.Duration) *Handler {
+	return &Handler{repo: repo, tx: tx, pool: pool, queryTimeout: queryTimeout}
 }
 
 func Routes(h *Handler) http.Handler {
@@ -32,7 +36,7 @@ func Routes(h *Handler) http.Handler {
 	return api.HandlerWithOptions(h, api.ChiServerOptions{
 		BaseRouter: router,
 		ErrorHandlerFunc: func(w http.ResponseWriter, r *http.Request, err error) {
-			fail(w, r, http.StatusBadRequest, "invalid_request", "tripId не UUID")
+			fail(w, r, http.StatusBadRequest, "invalid_request", "Invalid request", "некорректный параметр запроса")
 		},
 	})
 }
@@ -43,7 +47,7 @@ func (h *Handler) CreateTrip(w http.ResponseWriter, r *http.Request, _ api.Creat
 		return
 	}
 	if !bodyOK(body) {
-		fail(w, r, http.StatusBadRequest, "invalid_request", "проверь id, координаты и цену")
+		fail(w, r, http.StatusBadRequest, "invalid_request", "Invalid request", "проверь id, координаты и цену")
 		return
 	}
 
@@ -101,19 +105,13 @@ func (h *Handler) Health(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *Handler) Ready(w http.ResponseWriter, r *http.Request) {
-	if err := h.pool.Ping(r.Context()); err != nil {
+	ctx, cancel := context.WithTimeout(r.Context(), h.queryTimeout)
+	defer cancel()
+	if err := h.pool.Ping(ctx); err != nil {
 		send(w, http.StatusServiceUnavailable, api.HealthResponse{Status: "unavailable"})
 		return
 	}
 	send(w, http.StatusOK, api.HealthResponse{Status: "ok"})
-}
-
-func (h *Handler) ListTripPositions(w http.ResponseWriter, r *http.Request, _ api.TripId) {
-	w.WriteHeader(http.StatusNotImplemented)
-}
-
-func (h *Handler) CreateTripPosition(w http.ResponseWriter, r *http.Request, _ api.TripId) {
-	w.WriteHeader(http.StatusNotImplemented)
 }
 
 func bodyOK(body api.TripData) bool {
@@ -140,11 +138,11 @@ func decode(w http.ResponseWriter, r *http.Request, dst any) bool {
 	dec := json.NewDecoder(io.LimitReader(r.Body, 1<<20))
 	dec.DisallowUnknownFields()
 	if err := dec.Decode(dst); err != nil {
-		fail(w, r, http.StatusBadRequest, "invalid_request", "тело запроса не разобрать")
+		fail(w, r, http.StatusBadRequest, "invalid_request", "Invalid request", "тело запроса не разобрать")
 		return false
 	}
 	if dec.Decode(&struct{}{}) != io.EOF {
-		fail(w, r, http.StatusBadRequest, "invalid_request", "в теле лишние данные")
+		fail(w, r, http.StatusBadRequest, "invalid_request", "Invalid request", "в теле лишние данные")
 		return false
 	}
 	return true
@@ -153,26 +151,28 @@ func decode(w http.ResponseWriter, r *http.Request, dst any) bool {
 func writeErr(w http.ResponseWriter, r *http.Request, err error) {
 	switch {
 	case errors.Is(err, trip.ErrNotFound):
-		fail(w, r, http.StatusNotFound, "trip_not_found", "такой поездки нет")
+		fail(w, r, http.StatusNotFound, "trip_not_found", "Trip not found", "такой поездки нет")
 	case errors.Is(err, trip.ErrCompleted):
-		fail(w, r, http.StatusConflict, "trip_completed", "эта поездка уже завершена")
+		fail(w, r, http.StatusConflict, "trip_completed", "Trip completed", "эта поездка уже завершена")
 	case errors.Is(err, trip.ErrDriverBusy):
-		fail(w, r, http.StatusConflict, "driver_busy", "у водителя уже есть активная поездка")
+		fail(w, r, http.StatusConflict, "driver_busy", "Driver busy", "у водителя уже есть активная поездка")
 	default:
-		fail(w, r, http.StatusInternalServerError, "internal_error", "не получилось обработать запрос")
+		slog.Error("запрос не обработан", "err", err, "path", r.URL.Path)
+		fail(w, r, http.StatusInternalServerError, "internal_error", "Internal error", "не получилось обработать запрос")
 	}
 }
 
-func fail(w http.ResponseWriter, r *http.Request, status int, code, text string) {
+func fail(w http.ResponseWriter, r *http.Request, status int, code, title, detail string) {
 	w.Header().Set("Content-Type", "application/problem+json")
 	w.WriteHeader(status)
 	path := r.URL.Path
+	kind := "https://tripgo.example/problems/" + strings.ReplaceAll(code, "_", "-")
 	_ = json.NewEncoder(w).Encode(api.Problem{
-		Type:     "about:blank",
-		Title:    text,
+		Type:     kind,
+		Title:    title,
 		Status:   int32(status),
 		Code:     code,
-		Detail:   &text,
+		Detail:   &detail,
 		Instance: &path,
 	})
 }

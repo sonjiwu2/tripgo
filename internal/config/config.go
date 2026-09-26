@@ -16,8 +16,12 @@ type Config struct {
 }
 
 type HTTP struct {
-	Addr            string
-	ShutdownTimeout time.Duration
+	Addr              string
+	ShutdownTimeout   time.Duration
+	ReadTimeout       time.Duration
+	ReadHeaderTimeout time.Duration
+	WriteTimeout      time.Duration
+	IdleTimeout       time.Duration
 }
 
 type Log struct {
@@ -41,8 +45,12 @@ func Load() (Config, error) {
 	var src settings
 	cfg := Config{
 		HTTP: HTTP{
-			Addr:            src.text("HTTP_ADDR"),
-			ShutdownTimeout: src.duration("SHUTDOWN_TIMEOUT"),
+			Addr:              src.text("HTTP_ADDR"),
+			ShutdownTimeout:   src.duration("SHUTDOWN_TIMEOUT"),
+			ReadTimeout:       src.duration("HTTP_READ_TIMEOUT"),
+			ReadHeaderTimeout: src.duration("HTTP_READ_HEADER_TIMEOUT"),
+			WriteTimeout:      src.duration("HTTP_WRITE_TIMEOUT"),
+			IdleTimeout:       src.duration("HTTP_IDLE_TIMEOUT"),
 		},
 		Log: Log{
 			Level: src.logLevel("LOG_LEVEL"),

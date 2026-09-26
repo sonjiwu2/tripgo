@@ -44,6 +44,10 @@ make test       # go test -race ./...
 | `HTTP_ADDR` | адрес HTTP-сервера |
 | `LOG_LEVEL` | уровень логов |
 | `SHUTDOWN_TIMEOUT` | бюджет graceful shutdown |
+| `HTTP_READ_TIMEOUT` | таймаут чтения запроса |
+| `HTTP_READ_HEADER_TIMEOUT` | таймаут чтения заголовков |
+| `HTTP_WRITE_TIMEOUT` | таймаут записи ответа |
+| `HTTP_IDLE_TIMEOUT` | таймаут простаивающего соединения |
 | `DATABASE_URL` | строка подключения к PostgreSQL |
 | `DATABASE_MAX_CONNS` | верхняя граница пула |
 | `DATABASE_MIN_CONNS` | нижняя граница пула |
