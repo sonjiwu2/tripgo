@@ -14,8 +14,6 @@ import (
 	"github.com/sonjiwu2/tripgo/internal/trip"
 )
 
-var sqlb = squirrel.StatementBuilder.PlaceholderFormat(squirrel.Dollar)
-
 type Repo struct {
 	pool         *pgxpool.Pool
 	queryTimeout time.Duration
@@ -23,33 +21,6 @@ type Repo struct {
 
 func NewRepo(pool *pgxpool.Pool, queryTimeout time.Duration) *Repo {
 	return &Repo{pool: pool, queryTimeout: queryTimeout}
-}
-
-func (r *Repo) save(ctx context.Context, query string, args ...any) (pgconn.CommandTag, error) {
-	ctx, cancel := context.WithTimeout(ctx, r.queryTimeout)
-	defer cancel()
-	if tx, ok := getTransaction(ctx); ok {
-		return tx.Exec(ctx, query, args...)
-	}
-	return r.pool.Exec(ctx, query, args...)
-}
-
-type scanned struct {
-	pgx.Row
-	stop context.CancelFunc
-}
-
-func (s scanned) Scan(dest ...any) error {
-	defer s.stop()
-	return s.Row.Scan(dest...)
-}
-
-func (r *Repo) load(ctx context.Context, query string, args ...any) pgx.Row {
-	ctx, stop := context.WithTimeout(ctx, r.queryTimeout)
-	if tx, ok := getTransaction(ctx); ok {
-		return scanned{Row: tx.QueryRow(ctx, query, args...), stop: stop}
-	}
-	return scanned{Row: r.pool.QueryRow(ctx, query, args...), stop: stop}
 }
 
 func (r *Repo) Create(ctx context.Context, item trip.Trip) (trip.Trip, error) {
@@ -62,7 +33,7 @@ func (r *Repo) Create(ctx context.Context, item trip.Trip) (trip.Trip, error) {
 	vals := []any{
 		item.ID, item.UserID, item.DriverID,
 		item.StartLatitude, item.StartLongitude, item.EndLatitude, item.EndLongitude,
-		item.Price, "active", moment,
+		item.Price, trip.StatusActive, moment,
 	}
 
 	query, args, err := sqlb.Insert("trips").Columns(cols...).Values(vals...).ToSql()
@@ -79,7 +50,7 @@ func (r *Repo) Create(ctx context.Context, item trip.Trip) (trip.Trip, error) {
 
 	query, args, err = sqlb.Insert("trip_status_history").
 		Columns("trip_id", "to_status").
-		Values(item.ID, "active").
+		Values(item.ID, trip.StatusActive).
 		ToSql()
 	if err != nil {
 		return trip.Trip{}, err
@@ -120,10 +91,10 @@ func (r *Repo) Get(ctx context.Context, id string) (trip.Trip, error) {
 func (r *Repo) Finish(ctx context.Context, id string) (trip.Trip, error) {
 	moment := time.Now()
 	query, args, err := sqlb.Update("trips").
-		Set("status", "completed").
+		Set("status", trip.StatusCompleted).
 		Set("finished_at", moment).
 		Set("updated_at", moment).
-		Where("id = ? AND status = ?", id, "active").
+		Where("id = ? AND status = ?", id, trip.StatusActive).
 		ToSql()
 	if err != nil {
 		return trip.Trip{}, err
@@ -138,7 +109,7 @@ func (r *Repo) Finish(ctx context.Context, id string) (trip.Trip, error) {
 		if readErr != nil {
 			return trip.Trip{}, readErr
 		}
-		if found.Status == "completed" {
+		if found.Status == trip.StatusCompleted {
 			return trip.Trip{}, trip.ErrCompleted
 		}
 		return trip.Trip{}, fmt.Errorf("поездка нашлась, но закрыть её не вышло")
@@ -146,7 +117,7 @@ func (r *Repo) Finish(ctx context.Context, id string) (trip.Trip, error) {
 
 	query, args, err = sqlb.Insert("trip_status_history").
 		Columns("trip_id", "from_status", "to_status").
-		Values(id, "active", "completed").
+		Values(id, trip.StatusActive, trip.StatusCompleted).
 		ToSql()
 	if err != nil {
 		return trip.Trip{}, err
@@ -157,6 +128,35 @@ func (r *Repo) Finish(ctx context.Context, id string) (trip.Trip, error) {
 	}
 
 	return r.Get(ctx, id)
+}
+
+var sqlb = squirrel.StatementBuilder.PlaceholderFormat(squirrel.Dollar)
+
+func (r *Repo) save(ctx context.Context, query string, args ...any) (pgconn.CommandTag, error) {
+	ctx, cancel := context.WithTimeout(ctx, r.queryTimeout)
+	defer cancel()
+	if tx, ok := getTransaction(ctx); ok {
+		return tx.Exec(ctx, query, args...)
+	}
+	return r.pool.Exec(ctx, query, args...)
+}
+
+type scanned struct {
+	pgx.Row
+	stop context.CancelFunc
+}
+
+func (s scanned) Scan(dest ...any) error {
+	defer s.stop()
+	return s.Row.Scan(dest...)
+}
+
+func (r *Repo) load(ctx context.Context, query string, args ...any) pgx.Row {
+	ctx, stop := context.WithTimeout(ctx, r.queryTimeout)
+	if tx, ok := getTransaction(ctx); ok {
+		return scanned{Row: tx.QueryRow(ctx, query, args...), stop: stop}
+	}
+	return scanned{Row: r.pool.QueryRow(ctx, query, args...), stop: stop}
 }
 
 func driverIsBusy(err error) bool {
