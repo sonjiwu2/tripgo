@@ -35,7 +35,7 @@ func (m *manager) Do(ctx context.Context, fn func(ctx context.Context) error) er
 	committed := false
 	defer func() {
 		if !committed {
-			_ = tx.Rollback(ctx)
+			_ = tx.Rollback(context.WithoutCancel(ctx))
 		}
 	}()
 
