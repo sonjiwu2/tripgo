@@ -11,6 +11,13 @@ var (
 	ErrDriverBusy = errors.New("у водителя уже есть активная поездка")
 )
 
+type Status string
+
+const (
+	StatusActive    Status = "active"
+	StatusCompleted Status = "completed"
+)
+
 type Trip struct {
 	ID             string
 	UserID         string
@@ -20,7 +27,7 @@ type Trip struct {
 	EndLatitude    float64
 	EndLongitude   float64
 	Price          int64
-	Status         string
+	Status         Status
 	StartedAt      time.Time
 	FinishedAt     *time.Time
 	CreatedAt      time.Time
