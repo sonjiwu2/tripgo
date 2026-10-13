@@ -3,6 +3,7 @@ package postgres
 import (
 	"context"
 	"fmt"
+	"time"
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -34,9 +35,12 @@ func (m *manager) Do(ctx context.Context, fn func(ctx context.Context) error) er
 
 	committed := false
 	defer func() {
-		if !committed {
-			_ = tx.Rollback(context.WithoutCancel(ctx))
+		if committed {
+			return
 		}
+		rollbackCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
+		defer cancel()
+		_ = tx.Rollback(rollbackCtx)
 	}()
 
 	err = fn(context.WithValue(ctx, txKey{}, tx))
