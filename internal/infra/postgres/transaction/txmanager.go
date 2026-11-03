@@ -1,4 +1,4 @@
-package postgres
+package transaction
 
 import (
 	"context"
@@ -54,6 +54,10 @@ func (m *manager) Do(ctx context.Context, fn func(ctx context.Context) error) er
 	}
 	committed = true
 	return nil
+}
+
+func Current(ctx context.Context) (pgx.Tx, bool) {
+	return getTransaction(ctx)
 }
 
 func getTransaction(ctx context.Context) (pgx.Tx, bool) {

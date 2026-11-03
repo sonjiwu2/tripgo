@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"errors"
 	"log/slog"
 	"net/http"
 	"os"
@@ -9,63 +10,49 @@ import (
 	"syscall"
 
 	"github.com/sonjiwu2/tripgo/internal/config"
-	"github.com/sonjiwu2/tripgo/internal/httpapi"
-	"github.com/sonjiwu2/tripgo/internal/postgres"
+	"github.com/sonjiwu2/tripgo/internal/container"
 )
 
 func main() {
 	cfg, err := config.Load()
 	if err != nil {
-		slog.Error("конфиг не прочитан", "err", err)
+		slog.New(slog.NewJSONHandler(os.Stderr, nil)).Error("конфиг не прочитан", "err", err)
 		os.Exit(1)
 	}
-	slog.SetDefault(slog.New(slog.NewTextHandler(os.Stdout, &slog.HandlerOptions{
-		Level: cfg.Log.Level,
-	})))
 
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
 
-	pool, err := postgres.NewPool(ctx, cfg.DB)
+	app, err := container.New(ctx, cfg)
 	if err != nil {
-		slog.Error("база данных недоступна", "err", err)
+		slog.New(slog.NewJSONHandler(os.Stderr, nil)).Error("база данных недоступна", "err", err)
 		os.Exit(1)
 	}
-	defer pool.Close()
-
-	repo := postgres.NewRepo(pool, cfg.DB.QueryTimeout)
-	handler := httpapi.NewHandler(repo, postgres.NewTxManager(pool), pool, cfg.DB.QueryTimeout)
-	server := &http.Server{
-		Addr:              cfg.HTTP.Addr,
-		Handler:           httpapi.Routes(handler),
-		ReadTimeout:       cfg.HTTP.ReadTimeout,
-		ReadHeaderTimeout: cfg.HTTP.ReadHeaderTimeout,
-		WriteTimeout:      cfg.HTTP.WriteTimeout,
-		IdleTimeout:       cfg.HTTP.IdleTimeout,
-	}
+	defer app.Close()
 
 	listenErr := make(chan error, 1)
 	go func() {
-		slog.Info("сервер запущен", "addr", cfg.HTTP.Addr)
-		listenErr <- server.ListenAndServe()
+		app.Log.Info("сервер запущен", "addr", cfg.HTTP.Addr)
+		listenErr <- app.Server.ListenAndServe()
 	}()
 
 	select {
 	case <-ctx.Done():
 	case err := <-listenErr:
-		if err != nil && err != http.ErrServerClosed {
-			slog.Error("сервер не запустился", "err", err)
+		if err != nil && !errors.Is(err, http.ErrServerClosed) {
+			app.Log.Error("сервер не запустился", "err", err)
 			os.Exit(1)
 		}
 		return
 	}
 
 	stop()
+	app.Log.Info("сервер останавливается")
 	shutdownCtx, cancel := context.WithTimeout(context.Background(), cfg.HTTP.ShutdownTimeout)
 	defer cancel()
-	if err := server.Shutdown(shutdownCtx); err != nil {
-		slog.Error("не уложились в SHUTDOWN_TIMEOUT, обрываю соединения", "err", err)
-		_ = server.Close()
+	if err := app.Server.Shutdown(shutdownCtx); err != nil {
+		app.Log.Error("не уложились в SHUTDOWN_TIMEOUT, обрываю соединения", "err", err)
+		_ = app.Server.Close()
 		os.Exit(1)
 	}
 }
