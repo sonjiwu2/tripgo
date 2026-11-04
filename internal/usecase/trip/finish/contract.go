@@ -6,7 +6,7 @@ import (
 	domaintrip "github.com/sonjiwu2/tripgo/internal/domain/trip"
 )
 
-//go:generate mockgen -source contract.go -destination mocks_test.go -package finish_test
+//go:generate go tool mockgen -source contract.go -destination mocks_test.go -package finish_test -mock_names tripRepository=MockTripRepository,txManager=MockTxManager,counter=MockCounter
 
 type (
 	tripRepository interface {
