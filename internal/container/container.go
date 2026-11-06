@@ -4,6 +4,7 @@ import (
 	"context"
 	"log/slog"
 	"net/http"
+	"sync"
 
 	"github.com/sonjiwu2/tripgo/internal/config"
 	"github.com/sonjiwu2/tripgo/internal/http/probe"
@@ -23,23 +24,41 @@ import (
 type App struct {
 	Server *http.Server
 	Log    *slog.Logger
-	close  func()
+
+	once  sync.Once
+	err   error
+	close func(context.Context) error
 }
 
 func New(ctx context.Context, cfg config.Config) (*App, error) {
-	log := telemetry.NewLogger(cfg.Log.Level, "trip-service")
+	log := telemetry.NewLogger(cfg.Log.Level, cfg.OTEL.ServiceName)
+	shutdown, err := telemetry.Setup(ctx, cfg.OTEL)
+	if err != nil {
+		log.Error("телеметрия не поднялась, продолжаю без неё", "err", err)
+		shutdown = func(context.Context) error { return nil }
+	}
+
+	meters, err := telemetry.NewMeters()
+	if err != nil {
+		_ = shutdown(context.Background())
+		return nil, err
+	}
 
 	pool, err := postgres.NewPool(ctx, cfg.DB)
 	if err != nil {
+		_ = shutdown(context.Background())
 		return nil, err
 	}
 
 	repo := triprepo.New(pool, cfg.DB.QueryTimeout)
-	tx := transaction.NewTxManager(pool)
-	created := tripcreate.New(repo, tx, log, quietCounter{})
-	finished := tripfinish.New(repo, tx, log, quietCounter{})
-	loaded := tripget.New(repo)
+	if err = telemetry.WatchActive(log, repo); err != nil {
+		log.Error("счётчик активных поездок не включился", "err", err)
+	}
 
+	tx := transaction.NewTxManager(pool)
+	created := tripcreate.New(repo, tx, log, meters.Created)
+	finished := tripfinish.New(repo, tx, log, meters.Completed)
+	loaded := tripget.New(repo)
 	handler := router.New(
 		triphttp.NewHandler(created, log),
 		gethttp.NewHandler(loaded, log),
@@ -51,22 +70,24 @@ func New(ctx context.Context, cfg config.Config) (*App, error) {
 		Log: log,
 		Server: &http.Server{
 			Addr:              cfg.HTTP.Addr,
-			Handler:           router.Routes(handler, log),
+			Handler:           router.Routes(handler, log, meters.HTTPDuration, meters.HTTPActive),
 			ReadTimeout:       cfg.HTTP.ReadTimeout,
 			ReadHeaderTimeout: cfg.HTTP.ReadHeaderTimeout,
 			WriteTimeout:      cfg.HTTP.WriteTimeout,
 			IdleTimeout:       cfg.HTTP.IdleTimeout,
 		},
-		close: pool.Close,
+		close: func(ctx context.Context) error {
+			pool.Close()
+			return shutdown(ctx)
+		},
 	}, nil
 }
 
-func (a *App) Close() {
-	if a.close != nil {
-		a.close()
-	}
+func (a *App) Close(ctx context.Context) error {
+	a.once.Do(func() {
+		if a.close != nil {
+			a.err = a.close(ctx)
+		}
+	})
+	return a.err
 }
-
-type quietCounter struct{}
-
-func (quietCounter) Add(context.Context, int64) {}

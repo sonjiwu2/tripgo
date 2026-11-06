@@ -5,6 +5,7 @@ import (
 	"net/http"
 
 	"github.com/go-chi/chi/v5"
+	"go.opentelemetry.io/otel/metric"
 
 	"github.com/sonjiwu2/tripgo/api"
 	"github.com/sonjiwu2/tripgo/internal/http/domainerror"
@@ -47,10 +48,12 @@ func (h *Handler) Ready(w http.ResponseWriter, r *http.Request) {
 	h.probe.Ready(w, r)
 }
 
-func Routes(h *Handler, log *slog.Logger) http.Handler {
+func Routes(h *Handler, log *slog.Logger, duration metric.Float64Histogram, active metric.Int64UpDownCounter) http.Handler {
 	mux := chi.NewRouter()
 	mux.Use(middleware.Recover(log))
+	mux.Use(middleware.Tracing())
 	mux.Use(middleware.Logging(log))
+	mux.Use(middleware.Metrics(mux, duration, active))
 	return api.HandlerWithOptions(h, api.ChiServerOptions{
 		BaseRouter:       mux,
 		ErrorHandlerFunc: badParam,

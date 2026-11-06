@@ -13,6 +13,7 @@ type Config struct {
 	HTTP HTTP
 	Log  Log
 	DB   DB
+	OTEL OTEL
 }
 
 type HTTP struct {
@@ -35,6 +36,11 @@ type DB struct {
 	MaxConnLifetime time.Duration
 	ConnectTimeout  time.Duration
 	QueryTimeout    time.Duration
+}
+
+type OTEL struct {
+	ServiceName string
+	Protocol    string
 }
 
 type settings struct {
@@ -63,7 +69,28 @@ func Load() (Config, error) {
 			ConnectTimeout:  src.duration("DATABASE_CONNECT_TIMEOUT"),
 			QueryTimeout:    src.duration("DATABASE_QUERY_TIMEOUT"),
 		},
+		OTEL: OTEL{
+			ServiceName: src.text("OTEL_SERVICE_NAME"),
+			Protocol:    src.text("OTEL_EXPORTER_OTLP_PROTOCOL"),
+		},
 	}
+	src.text("OTEL_EXPORTER_OTLP_ENDPOINT")
+	src.text("OTEL_RESOURCE_ATTRIBUTES")
+	sampler := src.text("OTEL_TRACES_SAMPLER")
+	if src.err != nil {
+		return Config{}, src.err
+	}
+	src.oneOf("OTEL_EXPORTER_OTLP_PROTOCOL", cfg.OTEL.Protocol, "http/protobuf", "grpc")
+	src.oneOf(
+		"OTEL_TRACES_SAMPLER",
+		sampler,
+		"always_on",
+		"always_off",
+		"traceidratio",
+		"parentbased_always_on",
+		"parentbased_always_off",
+		"parentbased_traceidratio",
+	)
 	if src.err != nil {
 		return Config{}, src.err
 	}
@@ -121,6 +148,18 @@ func (s *settings) count(name string) int32 {
 		return 0
 	}
 	return int32(n)
+}
+
+func (s *settings) oneOf(name, value string, allowed ...string) {
+	if s.err != nil {
+		return
+	}
+	for _, item := range allowed {
+		if value == item {
+			return
+		}
+	}
+	s.err = fmt.Errorf("%s=%q, ожидается %s", name, value, strings.Join(allowed, ", "))
 }
 
 func (s *settings) logLevel(name string) slog.Level {

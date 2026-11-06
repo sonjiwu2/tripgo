@@ -28,7 +28,13 @@ func main() {
 		slog.New(slog.NewJSONHandler(os.Stderr, nil)).Error("база данных недоступна", "err", err)
 		os.Exit(1)
 	}
-	defer app.Close()
+	defer func() {
+		closeCtx, cancel := context.WithTimeout(context.Background(), cfg.HTTP.ShutdownTimeout)
+		defer cancel()
+		if err := app.Close(closeCtx); err != nil {
+			app.Log.Error("не получилось закрыть сервис", "err", err)
+		}
+	}()
 
 	listenErr := make(chan error, 1)
 	go func() {
@@ -41,6 +47,7 @@ func main() {
 	case err := <-listenErr:
 		if err != nil && !errors.Is(err, http.ErrServerClosed) {
 			app.Log.Error("сервер не запустился", "err", err)
+			_ = app.Close(context.Background())
 			os.Exit(1)
 		}
 		return
@@ -53,6 +60,7 @@ func main() {
 	if err := app.Server.Shutdown(shutdownCtx); err != nil {
 		app.Log.Error("не уложились в SHUTDOWN_TIMEOUT, обрываю соединения", "err", err)
 		_ = app.Server.Close()
+		_ = app.Close(context.Background())
 		os.Exit(1)
 	}
 }

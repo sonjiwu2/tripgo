@@ -18,6 +18,11 @@ func NewPool(ctx context.Context, db config.DB) (*pgxpool.Pool, error) {
 	cfg.MinConns = db.MinConns
 	cfg.MaxConnLifetime = db.MaxConnLifetime
 	cfg.ConnConfig.ConnectTimeout = db.ConnectTimeout
+	tracer, err := newQueryTracer()
+	if err != nil {
+		return nil, fmt.Errorf("не удалось настроить трейсинг запросов: %w", err)
+	}
+	cfg.ConnConfig.Tracer = tracer
 
 	pool, err := pgxpool.NewWithConfig(ctx, cfg)
 	if err != nil {
