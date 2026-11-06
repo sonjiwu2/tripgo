@@ -4,8 +4,6 @@ import (
 	"log/slog"
 	"net/http"
 
-	"github.com/google/uuid"
-
 	"github.com/sonjiwu2/tripgo/api"
 	"github.com/sonjiwu2/tripgo/internal/http/domainerror"
 	"github.com/sonjiwu2/tripgo/internal/http/present"
@@ -22,7 +20,7 @@ func NewHandler(trips tripReader, log *slog.Logger) *Handler {
 }
 
 func (h *Handler) GetTrip(w http.ResponseWriter, r *http.Request, tripID api.TripId) {
-	found, err := h.trips.Get(r.Context(), uuid.UUID(tripID).String())
+	found, err := h.trips.Get(r.Context(), tripID.String())
 	if err != nil {
 		h.fail(w, r, err)
 		return

@@ -4,8 +4,6 @@ import (
 	"log/slog"
 	"net/http"
 
-	"github.com/google/uuid"
-
 	"github.com/sonjiwu2/tripgo/api"
 	"github.com/sonjiwu2/tripgo/internal/http/domainerror"
 	"github.com/sonjiwu2/tripgo/internal/http/present"
@@ -22,7 +20,7 @@ func NewHandler(trips tripFinisher, log *slog.Logger) *Handler {
 }
 
 func (h *Handler) FinishTrip(w http.ResponseWriter, r *http.Request, tripID api.TripId) {
-	done, err := h.trips.Finish(r.Context(), uuid.UUID(tripID).String())
+	done, err := h.trips.Finish(r.Context(), tripID.String())
 	if err != nil {
 		h.fail(w, r, err)
 		return

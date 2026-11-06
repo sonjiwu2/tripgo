@@ -10,7 +10,6 @@ import (
 	"github.com/google/uuid"
 	"go.uber.org/mock/gomock"
 
-	"github.com/sonjiwu2/tripgo/api"
 	domaintrip "github.com/sonjiwu2/tripgo/internal/domain/trip"
 	"github.com/sonjiwu2/tripgo/internal/http/trip/get"
 )
@@ -24,7 +23,7 @@ func TestGetTripMissing(t *testing.T) {
 
 	req := httptest.NewRequest(http.MethodGet, "/api/v1/trips/"+id.String(), nil)
 	rec := httptest.NewRecorder()
-	handler.GetTrip(rec, req, api.TripId(id))
+	handler.GetTrip(rec, req, id)
 
 	if rec.Code != http.StatusNotFound {
 		t.Fatalf("status %d body %s", rec.Code, rec.Body.String())

@@ -25,6 +25,10 @@ import (
 )
 
 func TestMain(m *testing.M) {
+	os.Exit(migrateAndRun(m))
+}
+
+func migrateAndRun(m *testing.M) int {
 	url := os.Getenv("DATABASE_URL")
 	if url == "" {
 		panic("не задана DATABASE_URL")
@@ -40,7 +44,7 @@ func TestMain(m *testing.M) {
 	if err = goose.Up(db, migrationsDir()); err != nil {
 		panic(err)
 	}
-	os.Exit(m.Run())
+	return m.Run()
 }
 
 func TestSaveRollsBackBothTables(t *testing.T) {
