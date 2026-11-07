@@ -27,6 +27,12 @@ func TestCreate(t *testing.T) {
 		if item.UserID != draft.UserID || item.DriverID != draft.DriverID || item.Price != draft.Price {
 			t.Fatalf("saved %+v", item)
 		}
+		if item.StartLatitude != draft.StartLatitude || item.EndLatitude != draft.EndLatitude {
+			t.Fatalf("latitude %+v", item)
+		}
+		if item.StartLongitude != draft.StartLongitude || item.EndLongitude != draft.EndLongitude {
+			t.Fatalf("longitude %+v", item)
+		}
 		if item.Status != trip.StatusActive {
 			t.Fatalf("status %s", item.Status)
 		}

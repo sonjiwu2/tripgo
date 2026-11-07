@@ -49,6 +49,15 @@ func TestNew(t *testing.T) {
 				if !got.StartedAt.Equal(at) || !got.CreatedAt.Equal(at) {
 					t.Fatalf("timestamps %+v", got)
 				}
+				if !got.UpdatedAt.Equal(at) {
+					t.Fatalf("updated_at %s", got.UpdatedAt)
+				}
+				if got.StartLatitude != tt.lat || got.StartLongitude != tt.lon {
+					t.Fatalf("start %+v", got)
+				}
+				if got.EndLatitude != tt.elat || got.EndLongitude != tt.elon {
+					t.Fatalf("end %+v", got)
+				}
 				if got.FinishedAt != nil {
 					t.Fatal("finished_at is set")
 				}
@@ -62,6 +71,13 @@ func TestNew(t *testing.T) {
 				t.Fatalf("field %s", field.Field)
 			}
 		})
+	}
+}
+
+func TestFieldErrorText(t *testing.T) {
+	err := &FieldError{Field: "price", Reason: "цена не может быть отрицательной"}
+	if err.Error() != "price: цена не может быть отрицательной" {
+		t.Fatalf("text %s", err.Error())
 	}
 }
 
