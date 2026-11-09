@@ -10,6 +10,8 @@ import (
 	"github.com/sonjiwu2/tripgo/api"
 	"github.com/sonjiwu2/tripgo/internal/http/domainerror"
 	"github.com/sonjiwu2/tripgo/internal/http/middleware"
+	poslist "github.com/sonjiwu2/tripgo/internal/http/position/list"
+	possave "github.com/sonjiwu2/tripgo/internal/http/position/save"
 	"github.com/sonjiwu2/tripgo/internal/http/probe"
 	"github.com/sonjiwu2/tripgo/internal/http/respond"
 	tripcreate "github.com/sonjiwu2/tripgo/internal/http/trip/create"
@@ -21,11 +23,20 @@ type Handler struct {
 	create *tripcreate.Handler
 	get    *tripget.Handler
 	finish *tripfinish.Handler
+	save   *possave.Handler
+	list   *poslist.Handler
 	probe  *probe.Handler
 }
 
-func New(create *tripcreate.Handler, get *tripget.Handler, finish *tripfinish.Handler, probe *probe.Handler) *Handler {
-	return &Handler{create: create, get: get, finish: finish, probe: probe}
+func New(
+	create *tripcreate.Handler,
+	get *tripget.Handler,
+	finish *tripfinish.Handler,
+	save *possave.Handler,
+	list *poslist.Handler,
+	probe *probe.Handler,
+) *Handler {
+	return &Handler{create: create, get: get, finish: finish, save: save, list: list, probe: probe}
 }
 
 func (h *Handler) CreateTrip(w http.ResponseWriter, r *http.Request, params api.CreateTripParams) {
@@ -38,6 +49,14 @@ func (h *Handler) GetTrip(w http.ResponseWriter, r *http.Request, tripID api.Tri
 
 func (h *Handler) FinishTrip(w http.ResponseWriter, r *http.Request, tripID api.TripId) {
 	h.finish.FinishTrip(w, r, tripID)
+}
+
+func (h *Handler) CreateTripPosition(w http.ResponseWriter, r *http.Request, tripID api.TripId) {
+	h.save.CreateTripPosition(w, r, tripID)
+}
+
+func (h *Handler) ListTripPositions(w http.ResponseWriter, r *http.Request, tripID api.TripId) {
+	h.list.ListTripPositions(w, r, tripID)
 }
 
 func (h *Handler) Health(w http.ResponseWriter, r *http.Request) {
