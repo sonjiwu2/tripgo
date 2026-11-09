@@ -26,8 +26,10 @@ func main() {
 func run(cfg config.Config) int {
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
+	work, stopWork := context.WithCancel(context.Background())
+	defer stopWork()
 
-	app, err := container.New(ctx, cfg)
+	app, err := container.New(ctx, work, cfg)
 	if err != nil {
 		slog.New(slog.NewJSONHandler(os.Stderr, nil)).Error("база данных недоступна", "err", err)
 		return 1
@@ -49,6 +51,9 @@ func run(cfg config.Config) int {
 	shutdownCtx, cancel := context.WithTimeout(context.Background(), cfg.HTTP.ShutdownTimeout)
 	defer cancel()
 	defer func() {
+		if err := app.Stop(shutdownCtx); err != nil {
+			app.Log.Error("фоновые задачи не успели остановиться", "err", err)
+		}
 		if err := app.Close(shutdownCtx); err != nil {
 			app.Log.Error("не получилось закрыть сервис", "err", err)
 		}

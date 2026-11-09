@@ -7,6 +7,7 @@ import (
 	"sync"
 
 	"github.com/sonjiwu2/tripgo/internal/config"
+	"github.com/sonjiwu2/tripgo/internal/gateway/push"
 	poslist "github.com/sonjiwu2/tripgo/internal/http/position/list"
 	possave "github.com/sonjiwu2/tripgo/internal/http/position/save"
 	"github.com/sonjiwu2/tripgo/internal/http/probe"
@@ -24,18 +25,20 @@ import (
 	tripcreate "github.com/sonjiwu2/tripgo/internal/usecase/trip/create"
 	tripfinish "github.com/sonjiwu2/tripgo/internal/usecase/trip/finish"
 	tripget "github.com/sonjiwu2/tripgo/internal/usecase/trip/get"
+	"github.com/sonjiwu2/tripgo/internal/worker/positions"
 )
 
 type App struct {
-	Server *http.Server
-	Log    *slog.Logger
+	Server    *http.Server
+	Log       *slog.Logger
+	positions *positions.Pool
 
 	once  sync.Once
 	err   error
 	close func(context.Context) error
 }
 
-func New(ctx context.Context, cfg config.Config) (*App, error) {
+func New(ctx, work context.Context, cfg config.Config) (*App, error) {
 	log := telemetry.NewLogger(cfg.Log.Level, cfg.OTEL.ServiceName)
 	shutdown, err := telemetry.Setup(ctx, cfg.OTEL)
 	if err != nil {
@@ -67,17 +70,30 @@ func New(ctx context.Context, cfg config.Config) (*App, error) {
 	loaded := tripget.New(repo)
 	saved := possaveuc.New(points, tx, meters.PositionsSaved)
 	listed := poslistuc.New(points, repo)
+	gateway := push.New(cfg.Push.URL, cfg.Push.Timeout)
+	poller := positions.New(log, points, gateway, positions.Config{
+		Interval:    cfg.Position.CheckInterval,
+		Stale:       cfg.Position.StaleAfter,
+		Workers:     cfg.Position.Workers,
+		Queue:       cfg.Position.QueueSize,
+		PushTimeout: cfg.Push.Timeout,
+	}, meters.StaleChecks, meters.PositionRequests, meters.PositionDuration)
+	if err = telemetry.WatchPositions(poller); err != nil {
+		log.Error("метрики опроса координат не включились", "err", err)
+	}
+	poller.Start(work)
 	handler := router.New(
 		triphttp.NewHandler(created, log),
 		gethttp.NewHandler(loaded, log),
 		finishhttp.NewHandler(finished, log),
-		possave.NewHandler(saved, skipWaiting{}, log),
+		possave.NewHandler(saved, poller, log),
 		poslist.NewHandler(listed, log),
 		probe.New(pool, cfg.DB.QueryTimeout),
 	)
 
 	return &App{
-		Log: log,
+		Log:       log,
+		positions: poller,
 		Server: &http.Server{
 			Addr:              cfg.HTTP.Addr,
 			Handler:           router.Routes(handler, log, meters.HTTPDuration, meters.HTTPActive),
@@ -87,10 +103,18 @@ func New(ctx context.Context, cfg config.Config) (*App, error) {
 			IdleTimeout:       cfg.HTTP.IdleTimeout,
 		},
 		close: func(ctx context.Context) error {
+			gateway.Close()
 			pool.Close()
 			return shutdown(ctx)
 		},
 	}, nil
+}
+
+func (a *App) Stop(ctx context.Context) error {
+	if a.positions == nil {
+		return nil
+	}
+	return a.positions.Stop(ctx)
 }
 
 func (a *App) Close(ctx context.Context) error {
@@ -101,7 +125,3 @@ func (a *App) Close(ctx context.Context) error {
 	})
 	return a.err
 }
-
-type skipWaiting struct{}
-
-func (skipWaiting) Forget(string) {}
