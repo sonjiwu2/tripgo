@@ -27,6 +27,7 @@ type Trip struct {
 	FinishedAt     *time.Time
 	CreatedAt      time.Time
 	UpdatedAt      time.Time
+	LastPositionAt *time.Time
 }
 
 func New(id, userID, driverID string, startLat, startLon, endLat, endLon float64, price int64, at time.Time) (Trip, error) {
