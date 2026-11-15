@@ -57,6 +57,8 @@ linters:
               desc: домен не строит SQL
             - pkg: go.opentelemetry.io/otel
               desc: домен не знает про телеметрию
+            - pkg: github.com/sonjiwu2/tripgo/api
+              desc: домен не зависит от HTTP-контракта
         usecase:
           files:
             - "**/internal/usecase/**"
@@ -69,6 +71,16 @@ linters:
               desc: usecase работает через интерфейсы, а не через драйвер бд
             - pkg: github.com/Masterminds/squirrel
               desc: usecase не строит SQL
+            - pkg: github.com/sonjiwu2/tripgo/api
+              desc: usecase не зависит от HTTP-контракта
+        http:
+          files:
+            - "**/internal/http/**"
+          deny:
+            - pkg: github.com/sonjiwu2/tripgo/internal/repository
+              desc: HTTP-слой работает через usecase
+            - pkg: github.com/sonjiwu2/tripgo/internal/infra
+              desc: HTTP-слой получает инфраструктурные зависимости через интерфейсы
 
     # Запрещает обращения через идентификатор с подчёркиванием, поэтому пакеты
     # называем без snake_case: internal/adapter/http, а не internal/adapter/http_server.
