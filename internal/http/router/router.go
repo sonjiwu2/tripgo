@@ -50,10 +50,14 @@ func (h *Handler) Ready(w http.ResponseWriter, r *http.Request) {
 
 func Routes(h *Handler, log *slog.Logger, duration metric.Float64Histogram, active metric.Int64UpDownCounter) http.Handler {
 	mux := chi.NewRouter()
-	mux.Use(middleware.Recover(log))
-	mux.Use(middleware.Tracing())
-	mux.Use(middleware.Logging(log))
-	mux.Use(middleware.Metrics(mux, duration, active))
+	recoverRequest := middleware.Recover(log)
+	mux.Use(
+		recoverRequest,
+		middleware.Tracing(),
+		middleware.Logging(log),
+		middleware.Metrics(mux, duration, active),
+		recoverRequest,
+	)
 	return api.HandlerWithOptions(h, api.ChiServerOptions{
 		BaseRouter:       mux,
 		ErrorHandlerFunc: badParam,
