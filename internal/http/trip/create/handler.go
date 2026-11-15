@@ -22,8 +22,12 @@ func NewHandler(trips tripCreator, log *slog.Logger) *Handler {
 }
 
 func (h *Handler) CreateTrip(w http.ResponseWriter, r *http.Request, _ api.CreateTripParams) {
-	var body api.TripData
+	var body tripRequest
 	if !decode(w, r, &body) {
+		return
+	}
+	if !body.complete() {
+		writeInvalid(w, r, "обязательные поля должны быть заполнены")
 		return
 	}
 
