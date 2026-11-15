@@ -32,13 +32,6 @@ func run(cfg config.Config) int {
 		slog.New(slog.NewJSONHandler(os.Stderr, nil)).Error("база данных недоступна", "err", err)
 		return 1
 	}
-	defer func() {
-		closeCtx, cancel := context.WithTimeout(context.Background(), cfg.HTTP.ShutdownTimeout)
-		defer cancel()
-		if err := app.Close(closeCtx); err != nil {
-			app.Log.Error("не получилось закрыть сервис", "err", err)
-		}
-	}()
 
 	listenErr := make(chan error, 1)
 	go func() {
@@ -46,20 +39,27 @@ func run(cfg config.Config) int {
 		listenErr <- app.Server.ListenAndServe()
 	}()
 
+	var serverErr error
 	select {
 	case <-ctx.Done():
-	case err := <-listenErr:
-		if err != nil && !errors.Is(err, http.ErrServerClosed) {
-			app.Log.Error("сервер не запустился", "err", err)
-			return 1
-		}
-		return 0
+	case serverErr = <-listenErr:
 	}
 
 	stop()
-	app.Log.Info("сервер останавливается")
 	shutdownCtx, cancel := context.WithTimeout(context.Background(), cfg.HTTP.ShutdownTimeout)
 	defer cancel()
+	defer func() {
+		if err := app.Close(shutdownCtx); err != nil {
+			app.Log.Error("не получилось закрыть сервис", "err", err)
+		}
+	}()
+
+	if serverErr != nil && !errors.Is(serverErr, http.ErrServerClosed) {
+		app.Log.Error("сервер не запустился", "err", serverErr)
+		return 1
+	}
+
+	app.Log.Info("сервер останавливается")
 	if err := app.Server.Shutdown(shutdownCtx); err != nil {
 		app.Log.Error("не уложились в SHUTDOWN_TIMEOUT, обрываю соединения", "err", err)
 		_ = app.Server.Close()
