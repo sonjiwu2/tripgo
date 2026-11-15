@@ -37,5 +37,5 @@ func matchPattern(mux *chi.Mux, r *http.Request) string {
 	if found != "" {
 		return found
 	}
-	return r.URL.Path
+	return "unknown"
 }
