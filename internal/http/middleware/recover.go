@@ -22,7 +22,6 @@ func Recover(log *slog.Logger) func(http.Handler) http.Handler {
 				path := r.URL.Path
 				problem.Instance = &path
 				respond.Problem(w, status, problem)
-				logHandled(log, r, http.StatusInternalServerError, 0)
 			}()
 			next.ServeHTTP(w, r)
 		})
