@@ -27,7 +27,7 @@ test:
 	go tool cover -func=cover.out | grep total
 
 test-integration:
-	$(load_env) go test -race -tags=integration ./internal/repository/trip/
+	$(load_env) go test -race -p 1 -tags=integration ./internal/repository/...
 
 lint:
 	$(load_env) golangci-lint run ./...
