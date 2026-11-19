@@ -7,6 +7,8 @@ import (
 	"sync"
 
 	"github.com/sonjiwu2/tripgo/internal/config"
+	poslist "github.com/sonjiwu2/tripgo/internal/http/position/list"
+	possave "github.com/sonjiwu2/tripgo/internal/http/position/save"
 	"github.com/sonjiwu2/tripgo/internal/http/probe"
 	"github.com/sonjiwu2/tripgo/internal/http/router"
 	triphttp "github.com/sonjiwu2/tripgo/internal/http/trip/create"
@@ -15,7 +17,10 @@ import (
 	"github.com/sonjiwu2/tripgo/internal/infra/postgres"
 	"github.com/sonjiwu2/tripgo/internal/infra/postgres/transaction"
 	"github.com/sonjiwu2/tripgo/internal/infra/telemetry"
+	positionrepo "github.com/sonjiwu2/tripgo/internal/repository/position"
 	triprepo "github.com/sonjiwu2/tripgo/internal/repository/trip"
+	poslistuc "github.com/sonjiwu2/tripgo/internal/usecase/position/list"
+	possaveuc "github.com/sonjiwu2/tripgo/internal/usecase/position/save"
 	tripcreate "github.com/sonjiwu2/tripgo/internal/usecase/trip/create"
 	tripfinish "github.com/sonjiwu2/tripgo/internal/usecase/trip/finish"
 	tripget "github.com/sonjiwu2/tripgo/internal/usecase/trip/get"
@@ -54,15 +59,20 @@ func New(ctx context.Context, cfg config.Config) (*App, error) {
 	if err = telemetry.WatchActive(log, repo); err != nil {
 		log.Error("счётчик активных поездок не включился", "err", err)
 	}
+	points := positionrepo.New(pool, cfg.DB.QueryTimeout)
 
 	tx := transaction.NewTxManager(pool)
 	created := tripcreate.New(repo, tx, log, meters.Created)
 	finished := tripfinish.New(repo, tx, log, meters.Completed)
 	loaded := tripget.New(repo)
+	saved := possaveuc.New(points, tx, meters.PositionsSaved)
+	listed := poslistuc.New(points, repo)
 	handler := router.New(
 		triphttp.NewHandler(created, log),
 		gethttp.NewHandler(loaded, log),
 		finishhttp.NewHandler(finished, log),
+		possave.NewHandler(saved, skipWaiting{}, log),
+		poslist.NewHandler(listed, log),
 		probe.New(pool, cfg.DB.QueryTimeout),
 	)
 
@@ -91,3 +101,7 @@ func (a *App) Close(ctx context.Context) error {
 	})
 	return a.err
 }
+
+type skipWaiting struct{}
+
+func (skipWaiting) Forget(string) {}

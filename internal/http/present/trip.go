@@ -24,3 +24,13 @@ func Trip(item domaintrip.Trip) api.Trip {
 		LastPositionAt: item.LastPositionAt,
 	}
 }
+
+func Point(item domaintrip.Point) api.TripPosition {
+	tripID, _ := uuid.Parse(item.TripID)
+	return api.TripPosition{
+		Id:          item.ID,
+		TripId:      tripID,
+		Coordinates: api.Coordinates{Latitude: item.Latitude, Longitude: item.Longitude},
+		RecordedAt:  item.RecordedAt,
+	}
+}
