@@ -10,10 +10,12 @@ import (
 )
 
 type Config struct {
-	HTTP HTTP
-	Log  Log
-	DB   DB
-	OTEL OTEL
+	HTTP     HTTP
+	Log      Log
+	DB       DB
+	OTEL     OTEL
+	Position Position
+	Push     Push
 }
 
 type HTTP struct {
@@ -41,6 +43,18 @@ type DB struct {
 type OTEL struct {
 	ServiceName string
 	Protocol    string
+}
+
+type Position struct {
+	CheckInterval time.Duration
+	StaleAfter    time.Duration
+	Workers       int
+	QueueSize     int
+}
+
+type Push struct {
+	URL     string
+	Timeout time.Duration
 }
 
 type settings struct {
@@ -72,6 +86,16 @@ func Load() (Config, error) {
 		OTEL: OTEL{
 			ServiceName: src.text("OTEL_SERVICE_NAME"),
 			Protocol:    src.text("OTEL_EXPORTER_OTLP_PROTOCOL"),
+		},
+		Position: Position{
+			CheckInterval: src.duration("POSITION_CHECK_INTERVAL"),
+			StaleAfter:    src.duration("POSITION_STALE_AFTER"),
+			Workers:       int(src.count("POSITION_WORKERS")),
+			QueueSize:     int(src.count("POSITION_QUEUE_SIZE")),
+		},
+		Push: Push{
+			URL:     src.text("PUSH_HTTP_URL"),
+			Timeout: src.duration("PUSH_REQUEST_TIMEOUT"),
 		},
 	}
 	src.text("OTEL_EXPORTER_OTLP_ENDPOINT")
