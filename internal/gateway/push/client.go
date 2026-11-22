@@ -12,11 +12,22 @@ import (
 
 	"github.com/google/uuid"
 	"go.opentelemetry.io/otel"
+	"go.opentelemetry.io/otel/codes"
+	"go.opentelemetry.io/otel/propagation"
+	"go.opentelemetry.io/otel/trace"
 )
 
 type Gateway struct {
 	endpoint string
 	client   *http.Client
+}
+
+type StatusError struct {
+	Code int
+}
+
+func (e StatusError) Error() string {
+	return fmt.Sprintf("push ответил кодом %d", e.Code)
 }
 
 func New(base string, timeout time.Duration) *Gateway {
@@ -27,6 +38,9 @@ func New(base string, timeout time.Duration) *Gateway {
 			Transport: &http.Transport{
 				ResponseHeaderTimeout: timeout,
 			},
+			CheckRedirect: func(*http.Request, []*http.Request) error {
+				return http.ErrUseLastResponse
+			},
 		},
 	}
 }
@@ -36,9 +50,18 @@ func (g *Gateway) Close() {
 }
 
 func (g *Gateway) RequestPosition(ctx context.Context, driverID, tripID string) error {
-	ctx, span := otel.Tracer("github.com/sonjiwu2/tripgo").Start(ctx, "push REQUEST_POSITION")
+	ctx, span := otel.Tracer("github.com/sonjiwu2/tripgo").Start(ctx, "push REQUEST_POSITION", trace.WithSpanKind(trace.SpanKindClient))
 	defer span.End()
 
+	err := g.send(ctx, driverID, tripID)
+	if err != nil {
+		span.RecordError(err)
+		span.SetStatus(codes.Error, "push не принял запрос")
+	}
+	return err
+}
+
+func (g *Gateway) send(ctx context.Context, driverID, tripID string) error {
 	raw, err := json.Marshal(map[string]any{
 		"request_id":   uuid.NewString(),
 		"recipient_id": driverID,
@@ -54,15 +77,19 @@ func (g *Gateway) RequestPosition(ctx context.Context, driverID, tripID string) 
 		return fmt.Errorf("не получилось собрать запрос в push: %w", err)
 	}
 	req.Header.Set("Content-Type", "application/json")
+	otel.GetTextMapPropagator().Inject(ctx, propagation.HeaderCarrier(req.Header))
 
 	resp, err := g.client.Do(req)
 	if err != nil {
 		return fmt.Errorf("не достучался до push: %w", err)
 	}
 	defer resp.Body.Close()
-	_, _ = io.Copy(io.Discard, resp.Body)
+	_, readErr := io.Copy(io.Discard, resp.Body)
 	if resp.StatusCode != http.StatusAccepted {
-		return fmt.Errorf("push ответил кодом %d", resp.StatusCode)
+		return StatusError{Code: resp.StatusCode}
+	}
+	if readErr != nil {
+		return fmt.Errorf("не получилось прочитать ответ push: %w", readErr)
 	}
 	return nil
 }
