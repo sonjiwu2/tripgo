@@ -82,13 +82,13 @@ func (m *MockWaitingTrips) EXPECT() *MockWaitingTripsMockRecorder {
 }
 
 // Forget mocks base method.
-func (m *MockWaitingTrips) Forget(tripID string) {
+func (m *MockWaitingTrips) Forget(ctx context.Context, tripID string) {
 	m.ctrl.T.Helper()
-	m.ctrl.Call(m, "Forget", tripID)
+	m.ctrl.Call(m, "Forget", ctx, tripID)
 }
 
 // Forget indicates an expected call of Forget.
-func (mr *MockWaitingTripsMockRecorder) Forget(tripID any) *gomock.Call {
+func (mr *MockWaitingTripsMockRecorder) Forget(ctx, tripID any) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "Forget", reflect.TypeOf((*MockWaitingTrips)(nil).Forget), tripID)
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "Forget", reflect.TypeOf((*MockWaitingTrips)(nil).Forget), ctx, tripID)
 }

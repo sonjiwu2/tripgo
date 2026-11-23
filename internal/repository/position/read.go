@@ -37,23 +37,28 @@ func (r *Repo) List(ctx context.Context, tripID string) ([]domaintrip.Point, err
 	return out, nil
 }
 
-func (r *Repo) Quiet(ctx context.Context, before time.Time) ([]domaintrip.Quiet, error) {
+const (
+	quietFilter = `
+		SELECT id, driver_id, COALESCE(last_position_at, started_at)
+		FROM trips
+		WHERE status = 'active'
+		  AND COALESCE(last_position_at, started_at) < $1::timestamptz - make_interval(secs => $2)
+	`
+	quietAfter = ` AND (COALESCE(last_position_at, started_at), id) > ($4, $5)`
+	quietOrder = ` ORDER BY COALESCE(last_position_at, started_at), id LIMIT $3`
+)
+
+func (r *Repo) Quiet(ctx context.Context, at time.Time, staleAfter time.Duration, after domaintrip.Quiet, limit int) ([]domaintrip.Quiet, error) {
 	ctx, cancel := context.WithTimeout(ctx, r.queryTimeout)
 	defer cancel()
 
-	rows, err := r.query(ctx, `
-		SELECT id, driver_id, COALESCE(last_position_at, started_at)
-		FROM trips
-		WHERE status = $1
-		  AND COALESCE(last_position_at, started_at) < $2
-		ORDER BY COALESCE(last_position_at, started_at), id`,
-		domaintrip.StatusActive, before)
+	rows, err := r.quietRows(ctx, at, staleAfter, after, limit)
 	if err != nil {
 		return nil, fmt.Errorf("не получилось выбрать поездки без свежих координат: %w", err)
 	}
 	defer rows.Close()
 
-	out := make([]domaintrip.Quiet, 0)
+	out := make([]domaintrip.Quiet, 0, limit)
 	for rows.Next() {
 		var item domaintrip.Quiet
 		if err = rows.Scan(&item.ID, &item.DriverID, &item.Since); err != nil {
@@ -65,6 +70,13 @@ func (r *Repo) Quiet(ctx context.Context, before time.Time) ([]domaintrip.Quiet,
 		return nil, fmt.Errorf("выборка поездок для опроса оборвалась: %w", err)
 	}
 	return out, nil
+}
+
+func (r *Repo) quietRows(ctx context.Context, at time.Time, staleAfter time.Duration, after domaintrip.Quiet, limit int) (rows, error) {
+	if after.ID == "" {
+		return r.query(ctx, quietFilter+quietOrder, at, staleAfter.Seconds(), limit)
+	}
+	return r.query(ctx, quietFilter+quietAfter+quietOrder, at, staleAfter.Seconds(), limit, after.Since, after.ID)
 }
 
 func (r *Repo) query(ctx context.Context, sql string, args ...any) (rows, error) {

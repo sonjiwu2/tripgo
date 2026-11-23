@@ -5,56 +5,38 @@ import (
 	"time"
 
 	"go.opentelemetry.io/otel"
+	"go.opentelemetry.io/otel/codes"
 	"go.opentelemetry.io/otel/trace"
 )
 
-func (p *Pool) worker() {
-	defer p.wg.Done()
+func (p *Pool) worker(ctx context.Context) {
 	for {
-		select {
-		case <-p.workCtx.Done():
+		item, ok := p.queue.take(ctx)
+		if !ok {
 			return
-		case job, ok := <-p.jobs:
-			if !ok {
-				return
-			}
-			if !p.still(job.tripID) {
-				continue
-			}
-			p.handle(job)
-			p.finish(job.tripID)
 		}
+		p.handle(ctx, item)
+		p.queue.finish(item.trip.ID)
 	}
 }
 
-func (p *Pool) still(tripID string) bool {
-	p.mu.Lock()
-	defer p.mu.Unlock()
-	_, ok := p.waiting[tripID]
-	return ok
-}
-
-func (p *Pool) finish(tripID string) {
-	p.mu.Lock()
-	delete(p.waiting, tripID)
-	p.mu.Unlock()
-}
-
-func (p *Pool) handle(job job) {
+func (p *Pool) handle(ctx context.Context, item job) {
 	p.busy.Add(1)
 	defer p.busy.Add(-1)
 
-	ctx, cancel := context.WithTimeout(p.workCtx, p.pushTimeout)
+	ctx, cancel := context.WithTimeout(ctx, p.cfg.PushTimeout)
 	defer cancel()
-	ctx, span := otel.Tracer("github.com/sonjiwu2/tripgo").Start(ctx, "positions.task", trace.WithLinks(job.link))
+	ctx, span := otel.Tracer("github.com/sonjiwu2/tripgo").Start(ctx, "positions.task", trace.WithNewRoot(), trace.WithLinks(item.link))
 	defer span.End()
 
 	started := time.Now()
-	err := p.push.RequestPosition(ctx, job.driverID, job.tripID)
+	err := p.push.RequestPosition(ctx, item.trip.DriverID, item.trip.ID)
 	result := "success"
 	if err != nil {
 		result = "error"
-		p.log.WarnContext(ctx, "push не принял запрос координаты", "trip_id", job.tripID, "err", err)
+		span.RecordError(err)
+		span.SetStatus(codes.Error, "запрос координаты не удался")
+		p.log.WarnContext(ctx, "push не принял запрос координаты", "trip_id", item.trip.ID, "err", err)
 	}
 	p.requests.Add(ctx, result)
 	p.timing.Record(ctx, time.Since(started).Seconds(), result)

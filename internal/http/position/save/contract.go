@@ -15,6 +15,6 @@ type (
 	}
 
 	waitingTrips interface {
-		Forget(tripID string)
+		Forget(ctx context.Context, tripID string)
 	}
 )

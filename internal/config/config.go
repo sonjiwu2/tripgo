@@ -50,6 +50,7 @@ type Position struct {
 	StaleAfter    time.Duration
 	Workers       int
 	QueueSize     int
+	ScanBatchSize int
 }
 
 type Push struct {
@@ -88,14 +89,15 @@ func Load() (Config, error) {
 			Protocol:    src.text("OTEL_EXPORTER_OTLP_PROTOCOL"),
 		},
 		Position: Position{
-			CheckInterval: src.duration("POSITION_CHECK_INTERVAL"),
-			StaleAfter:    src.duration("POSITION_STALE_AFTER"),
-			Workers:       int(src.count("POSITION_WORKERS")),
-			QueueSize:     int(src.count("POSITION_QUEUE_SIZE")),
+			CheckInterval: src.duration("POSITION_CHECK_INTERVAL", "30s"),
+			StaleAfter:    src.duration("POSITION_STALE_AFTER", "60s"),
+			Workers:       int(src.count("POSITION_WORKERS", "4")),
+			QueueSize:     int(src.count("POSITION_QUEUE_SIZE", "100")),
+			ScanBatchSize: int(src.count("POSITION_SCAN_BATCH_SIZE", "100")),
 		},
 		Push: Push{
 			URL:     src.text("PUSH_HTTP_URL"),
-			Timeout: src.duration("PUSH_REQUEST_TIMEOUT"),
+			Timeout: src.duration("PUSH_REQUEST_TIMEOUT", "1s"),
 		},
 	}
 	src.text("OTEL_EXPORTER_OTLP_ENDPOINT")
@@ -128,11 +130,14 @@ func Load() (Config, error) {
 	return cfg, nil
 }
 
-func (s *settings) text(name string) string {
+func (s *settings) text(name string, fallback ...string) string {
 	if s.err != nil {
 		return ""
 	}
 	v := strings.TrimSpace(os.Getenv(name))
+	if v == "" && len(fallback) != 0 {
+		return fallback[0]
+	}
 	if v == "" {
 		s.err = fmt.Errorf("не задана переменная %s", name)
 		return ""
@@ -140,8 +145,8 @@ func (s *settings) text(name string) string {
 	return v
 }
 
-func (s *settings) duration(name string) time.Duration {
-	raw := s.text(name)
+func (s *settings) duration(name string, fallback ...string) time.Duration {
+	raw := s.text(name, fallback...)
 	if s.err != nil {
 		return 0
 	}
@@ -157,8 +162,8 @@ func (s *settings) duration(name string) time.Duration {
 	return d
 }
 
-func (s *settings) count(name string) int32 {
-	raw := s.text(name)
+func (s *settings) count(name string, fallback ...string) int32 {
+	raw := s.text(name, fallback...)
 	if s.err != nil {
 		return 0
 	}

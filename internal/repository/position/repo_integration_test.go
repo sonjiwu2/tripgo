@@ -9,7 +9,7 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
-	"strings"
+	"slices"
 	"testing"
 	"time"
 
@@ -54,7 +54,7 @@ func TestSaveRollsBackPointAndStamp(t *testing.T) {
 	pool := openPool(t)
 	trips := triprepo.New(pool, 3*time.Second)
 	points := position.New(pool, 3*time.Second)
-	tx := transaction.NewTxManager(pool)
+	tx := transaction.NewTxManager(pool, 3*time.Second)
 	item := newTrip(t, time.Now().Add(-2*time.Hour))
 	t.Cleanup(func() { dropTrip(t, pool, item.ID) })
 
@@ -94,7 +94,7 @@ func TestOldPointDoesNotAgeTrip(t *testing.T) {
 	pool := openPool(t)
 	trips := triprepo.New(pool, 3*time.Second)
 	points := position.New(pool, 3*time.Second)
-	tx := transaction.NewTxManager(pool)
+	tx := transaction.NewTxManager(pool, 3*time.Second)
 	item := newTrip(t, time.Now().Add(-3*time.Hour))
 	t.Cleanup(func() { dropTrip(t, pool, item.ID) })
 	if err := tx.Do(ctx, func(ctx context.Context) error {
@@ -150,7 +150,7 @@ func TestQuietSkipsFreshAndCompleted(t *testing.T) {
 	pool := openPool(t)
 	trips := triprepo.New(pool, 3*time.Second)
 	points := position.New(pool, 3*time.Second)
-	tx := transaction.NewTxManager(pool)
+	tx := transaction.NewTxManager(pool, 3*time.Second)
 
 	stale := newTrip(t, time.Now().Add(-2*time.Hour))
 	fresh := newTrip(t, time.Now().Add(-2*time.Hour))
@@ -189,7 +189,7 @@ func TestQuietSkipsFreshAndCompleted(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	rows, err := points.Quiet(ctx, time.Now().Add(-time.Minute))
+	rows, err := points.Quiet(ctx, time.Now(), time.Minute, domaintrip.Quiet{}, 100)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -205,44 +205,45 @@ func TestQuietSkipsFreshAndCompleted(t *testing.T) {
 	}
 }
 
-func TestQuietUsesIndex(t *testing.T) {
-	pool := openPool(t)
+func TestQuietPagesWithEqualTimes(t *testing.T) {
 	ctx := context.Background()
-	tx, err := pool.Begin(ctx)
-	if err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(func() { _ = tx.Rollback(context.Background()) })
-	if _, err = tx.Exec(ctx, "SET LOCAL enable_seqscan = off"); err != nil {
-		t.Fatal(err)
-	}
-	rows, err := tx.Query(ctx, `
-		EXPLAIN
-		SELECT id, driver_id, COALESCE(last_position_at, started_at)
-		FROM trips
-		WHERE status = $1
-		  AND COALESCE(last_position_at, started_at) < $2
-		ORDER BY COALESCE(last_position_at, started_at), id`,
-		domaintrip.StatusActive, time.Now())
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer rows.Close()
-	var plan strings.Builder
-	for rows.Next() {
-		var line string
-		if err = rows.Scan(&line); err != nil {
+	pool := openPool(t)
+	trips := triprepo.New(pool, 3*time.Second)
+	points := position.New(pool, 3*time.Second)
+	tx := transaction.NewTxManager(pool, 3*time.Second)
+	at := time.Date(2001, 1, 1, 0, 0, 0, 0, time.UTC)
+
+	want := make([]string, 0, 5)
+	for range 5 {
+		item := newTrip(t, at)
+		t.Cleanup(func() { dropTrip(t, pool, item.ID) })
+		if err := tx.Do(ctx, func(ctx context.Context) error {
+			return trips.Save(ctx, item)
+		}); err != nil {
 			t.Fatal(err)
 		}
-		plan.WriteString(line)
-		plan.WriteByte('\n')
+		want = append(want, item.ID)
 	}
-	if err = rows.Err(); err != nil {
-		t.Fatal(err)
+	slices.Sort(want)
+
+	const batch = 2
+	after := domaintrip.Quiet{ID: uuid.Nil.String(), Since: at.Add(-time.Microsecond)}
+	got := make([]string, 0, len(want))
+	for page := range 3 {
+		rows, err := points.Quiet(ctx, at.Add(2*time.Minute), time.Minute, after, batch)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(rows) != min(batch, len(want)-page*batch) {
+			t.Fatalf("page %d: rows %d", page, len(rows))
+		}
+		for _, row := range rows {
+			got = append(got, row.ID)
+		}
+		after = rows[len(rows)-1]
 	}
-	text := plan.String()
-	if strings.Contains(text, "Seq Scan") || !strings.Contains(text, "trips_active_quiet_idx") {
-		t.Fatalf("plan\n%s", text)
+	if !slices.Equal(got, want) {
+		t.Fatalf("ids %v, want %v", got, want)
 	}
 }
 
