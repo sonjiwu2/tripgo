@@ -48,13 +48,13 @@ func New(ctx, work context.Context, cfg config.Config) (*App, error) {
 
 	meters, err := telemetry.NewMeters()
 	if err != nil {
-		_ = shutdown(context.Background())
+		_ = shutdown(ctx)
 		return nil, err
 	}
 
 	pool, err := postgres.NewPool(ctx, cfg.DB)
 	if err != nil {
-		_ = shutdown(context.Background())
+		_ = shutdown(ctx)
 		return nil, err
 	}
 
@@ -64,7 +64,7 @@ func New(ctx, work context.Context, cfg config.Config) (*App, error) {
 	}
 	points := positionrepo.New(pool, cfg.DB.QueryTimeout)
 
-	tx := transaction.NewTxManager(pool)
+	tx := transaction.NewTxManager(pool, cfg.DB.QueryTimeout)
 	created := tripcreate.New(repo, tx, log, meters.Created)
 	finished := tripfinish.New(repo, tx, log, meters.Completed)
 	loaded := tripget.New(repo)
@@ -76,8 +76,9 @@ func New(ctx, work context.Context, cfg config.Config) (*App, error) {
 		Stale:       cfg.Position.StaleAfter,
 		Workers:     cfg.Position.Workers,
 		Queue:       cfg.Position.QueueSize,
+		BatchSize:   cfg.Position.ScanBatchSize,
 		PushTimeout: cfg.Push.Timeout,
-	}, meters.StaleChecks, meters.PositionRequests, meters.PositionDuration)
+	}, meters.StaleChecks, meters.PositionRequests, meters.PositionDuration, meters.RowsRead)
 	if err = telemetry.WatchPositions(poller); err != nil {
 		log.Error("метрики опроса координат не включились", "err", err)
 	}
@@ -103,9 +104,10 @@ func New(ctx, work context.Context, cfg config.Config) (*App, error) {
 			IdleTimeout:       cfg.HTTP.IdleTimeout,
 		},
 		close: func(ctx context.Context) error {
+			err := shutdown(ctx)
 			gateway.Close()
 			pool.Close()
-			return shutdown(ctx)
+			return err
 		},
 	}, nil
 }

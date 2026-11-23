@@ -25,7 +25,7 @@ func TestCreateTripPosition(t *testing.T) {
 
 	points.EXPECT().Save(gomock.Any(), id.String(), 59.93, 30.33, gomock.Any()).
 		Return(trip.Point{ID: 3, TripID: id.String(), Latitude: 59.93, Longitude: 30.33, RecordedAt: time.Now()}, nil)
-	waiting.EXPECT().Forget(id.String())
+	waiting.EXPECT().Forget(gomock.Any(), id.String())
 
 	req := httptest.NewRequest(http.MethodPost, "/api/v1/trips/"+id.String()+"/positions", strings.NewReader(
 		`{"coordinates":{"latitude":59.93,"longitude":30.33},"recorded_at":"`+recorded+`"}`,

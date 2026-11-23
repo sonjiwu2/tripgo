@@ -62,7 +62,7 @@ func (h *Handler) CreateTripPosition(w http.ResponseWriter, r *http.Request, tri
 		h.fail(w, r, err)
 		return
 	}
-	h.waiting.Forget(tripID.String())
+	h.waiting.Forget(r.Context(), tripID.String())
 	h.log.InfoContext(r.Context(), "координата сохранена", "trip_id", tripID.String())
 	respond.JSON(w, http.StatusCreated, present.Point(saved))
 }

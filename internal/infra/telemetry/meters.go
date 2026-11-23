@@ -18,6 +18,7 @@ type Meters struct {
 	StaleChecks      ResultCounter
 	PositionRequests ResultCounter
 	PositionDuration Duration
+	RowsRead         Rows
 }
 
 type Counter struct {
@@ -42,6 +43,14 @@ type Duration struct {
 
 func (d Duration) Record(ctx context.Context, seconds float64, result string) {
 	d.hist.Record(ctx, seconds, metric.WithAttributes(attribute.String("result", result)))
+}
+
+type Rows struct {
+	hist metric.Int64Histogram
+}
+
+func (r Rows) Record(ctx context.Context, rows int64) {
+	r.hist.Record(ctx, rows)
 }
 
 type activeTrips interface {
@@ -90,7 +99,12 @@ func NewMeters() (Meters, error) {
 	if err != nil {
 		return Meters{}, err
 	}
+	rowsRead, err := meter.Int64Histogram("tripgo.stale_checks.rows_read", metric.WithUnit("{row}"))
+	if err != nil {
+		return Meters{}, err
+	}
 	return Meters{
+		RowsRead:         Rows{hist: rowsRead},
 		HTTPDuration:     duration,
 		HTTPActive:       active,
 		Created:          Counter{counter: created},
