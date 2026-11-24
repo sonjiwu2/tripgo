@@ -1,14 +1,15 @@
 # trip-service
 
-Сервис поездок TripGo: создание, получение и завершение поездки по контракту `contracts/openapi/trip-service.openapi.yaml`, данные хранятся в PostgreSQL.
+Сервис поездок TripGo: создание, получение и завершение поездки. В этой работе код разложен по слоям, добавлены тесты, линтер, логи, метрики и трейсы. Новых ручек и миграций нет.
 
-Лабораторная работа 1 сделана целиком, задания со звёздочкой не делал.
+Из заданий со звёздочкой сделал мутационное тестирование.
 
 ## Требования
 
 - Go 1.25.4+
 - Docker
 - [tripgoctl](https://github.com/course-go-autumn-2026/course-infra)
+- golangci-lint v2
 
 На Windows всё запускается из WSL2.
 
@@ -21,17 +22,7 @@ make migrate
 make run
 ```
 
-`tripgoctl environment start` поднимает PostgreSQL и создаёт `.env`.
-
-Таймауты HTTP-сервера в стандартный набор переменных не входят, поэтому они заданы в `environment.toml` и попадают в `.env` вместе с остальными:
-
-```toml
-[env]
-HTTP_READ_TIMEOUT = "5s"
-HTTP_READ_HEADER_TIMEOUT = "5s"
-HTTP_WRITE_TIMEOUT = "10s"
-HTTP_IDLE_TIMEOUT = "60s"
-```
+`tripgoctl environment start` поднимает PostgreSQL и коллектор и создаёт `.env`. Ссылки на Jaeger и Grafana показывает `tripgoctl connect`.
 
 Проверить, что сервис поднялся: `GET /health` и `GET /ready`.
 
@@ -42,8 +33,10 @@ HTTP_IDLE_TIMEOUT = "60s"
 | `make run` | запустить сервис |
 | `make migrate` | накатить миграции |
 | `make migrate-down` | откатить миграцию |
-| `make generate` | сгенерировать `api/api.gen.go` из OpenAPI |
-| `make test` | тесты с `-race` (в этой работе тестов нет) |
+| `make generate` | сгенерировать `api/api.gen.go` и моки |
+| `make test` | unit-тесты с `-race` и покрытие |
+| `make test-integration` | тесты репозитория на PostgreSQL |
+| `make lint` | запустить `golangci-lint` |
 
 ## Переменные окружения
 
@@ -53,117 +46,60 @@ HTTP_IDLE_TIMEOUT = "60s"
 
 **База:** `DATABASE_URL`, `DATABASE_MAX_CONNS`, `DATABASE_MIN_CONNS`, `DATABASE_MAX_CONN_LIFETIME`, `DATABASE_CONNECT_TIMEOUT`, `DATABASE_QUERY_TIMEOUT`
 
-## Структура
+**Телеметрия:** `OTEL_SERVICE_NAME`, `OTEL_EXPORTER_OTLP_ENDPOINT`, `OTEL_EXPORTER_OTLP_PROTOCOL`, `OTEL_RESOURCE_ATTRIBUTES`, `OTEL_TRACES_SAMPLER`
+
+## Архитектура
+
+Зависимости идут внутрь: хендлеры знают про usecase, usecase знает про домен, домен не знает ни про HTTP, ни про базу.
 
 ```text
-cmd/trip-service/   запуск: конфиг, пул, HTTP-сервер, graceful shutdown
-internal/config/    чтение и проверка env
-internal/trip/      модель поездки и доменные ошибки
-internal/postgres/  пул, менеджер транзакций, репозиторий
-internal/httpapi/   хендлеры, валидация, ошибки в problem+json
-api/                код, сгенерированный из OpenAPI
-migrations/         миграции goose
+cmd/trip-service/          запуск и остановка сервиса
+internal/config/           чтение и проверка env
+internal/container/        создание и связывание всех частей
+internal/domain/trip/      поездка, правила и ошибки
+internal/model/            данные новой поездки
+internal/usecase/trip/     создание, получение, завершение
+internal/http/trip/        ручки поездок
+internal/http/domainerror/ ошибка → HTTP-ответ
+internal/http/middleware/  паника, трейсы, логи, метрики
+internal/http/router/      сборка ручек и middleware
+internal/http/probe/       /health и /ready
+internal/http/respond/     запись ответа
+internal/http/present/     поездка в формате API
+internal/repository/trip/  запросы в базу
+internal/infra/postgres/   пул и транзакции
+internal/infra/telemetry/  OpenTelemetry и логгер
+api/                       код, сгенерированный из OpenAPI
+migrations/                миграции goose
 ```
+
+`cmd/trip-service` и `api/` названы как в соглашениях курса. Пакеты `router`, `probe`, `respond` и `present` вынес отдельно, чтобы не повторять этот код в каждой ручке.
+
+Интерфейсы лежат в `contract.go` у того пакета, который их использует: так он сам описывает, что ему нужно, а в тестах вместо базы можно подставить мок. Второй транспорт будет вызывать те же usecase.
 
 ## Решения
 
-### Уровень изоляции
+- Ошибки домена переводятся в HTTP только в `domainerror`. При 500 клиент получает общий текст, а подробности идут в лог.
+- Создание поездки пишет в `trips` и `trip_status_history` в одной транзакции.
+- Одну активную поездку на водителя держит индекс `trips_one_active_driver_idx`.
+- Если коллектор недоступен, сервис продолжает работать.
 
-Используется `READ COMMITTED`, он задаётся при старте транзакции в `Do`.
+## Мутационное тестирование
 
-Правила, которые могут сломаться при параллельных запросах, держит сама база: одну активную поездку на водителя — уникальный индекс, повторное завершение — условие в `UPDATE`. Более строгий уровень ничего бы тут не дал, а ошибки сериализации пришлось бы ретраить.
+Гонял `gremlins` v0.6.0 по `internal/domain` и `internal/usecase` со всеми видами мутантов. Он не убирает строки и не подменяет значения, поэтому ещё 17 мутантов сделал руками.
 
-### Менеджер транзакций
+| | Всего | Убито | Выжило | Не покрыто |
+|---|---|---|---|---|
+| `gremlins`, до | 39 | 37 | 0 | 2 |
+| `gremlins`, после | 39 | 39 | 0 | 0 |
+| Ручные, до | 17 | 11 | 6 | 0 |
+| Ручные, после | 17 | 17 | 0 | 0 |
 
-`Do` открывает транзакцию, кладёт её в контекст и вызывает функцию. Если функция вернула ошибку или упала с паникой — rollback, иначе commit. Вложенный `Do` находит транзакцию в контексте и новую не открывает.
+Что нашлось:
 
-```go
-func (m *manager) Do(ctx context.Context, fn func(ctx context.Context) error) error {
-    if _, ok := getTransaction(ctx); ok {
-        return fn(ctx)
-    }
-
-    tx, err := m.pool.BeginTx(ctx, pgx.TxOptions{IsoLevel: pgx.ReadCommitted})
-    if err != nil {
-        return fmt.Errorf("не удалось начать транзакцию: %w", err)
-    }
-
-    committed := false
-    defer func() {
-        if !committed {
-            _ = tx.Rollback(ctx)
-        }
-    }()
-
-    err = fn(context.WithValue(ctx, txKey{}, tx))
-    if err != nil {
-        return err
-    }
-
-    err = tx.Commit(ctx)
-    if err != nil {
-        return fmt.Errorf("не удалось зафиксировать транзакцию: %w", err)
-    }
-    committed = true
-    return nil
-}
-```
-
-Репозиторий берёт транзакцию из контекста, а если её там нет, работает через пул, так что аргументом в методы она не передаётся:
-
-```go
-func (r *Repo) save(ctx context.Context, query string, args ...any) (pgconn.CommandTag, error) {
-    ctx, cancel := context.WithTimeout(ctx, r.queryTimeout)
-    defer cancel()
-    if tx, ok := getTransaction(ctx); ok {
-        return tx.Exec(ctx, query, args...)
-    }
-    return r.pool.Exec(ctx, query, args...)
-}
-```
-
-Модель и ошибки в `internal/trip` от pgx не зависят, SQL и транзакции — в `internal/postgres`. Создание поездки пишет в `trips` и `trip_status_history` в одном `Do`.
-
-### Одна активная поездка на водителя
-
-Частичный уникальный индекс в миграции:
-
-```sql
-CREATE UNIQUE INDEX trips_one_active_driver_idx
-    ON trips (driver_id)
-    WHERE status = 'active';
-```
-
-При одновременном создании вторая вставка получает от PostgreSQL ошибку `23505`. Репозиторий по коду и имени индекса превращает её в `ErrDriverBusy`, и ручка отвечает `409 driver_busy`:
-
-```go
-return pgErr.Code == "23505" && pgErr.ConstraintName == "trips_one_active_driver_idx"
-```
-
-### Завершение поездки
-
-Статус проверяется прямо в `UPDATE`, поэтому между проверкой и записью нет окна для второго запроса:
-
-```go
-query, args, err := sqlb.Update("trips").
-    Set("status", "completed").
-    Set("finished_at", moment).
-    Set("updated_at", moment).
-    Where("id = ? AND status = ?", id, "active").
-    ToSql()
-```
-
-Если обновилось 0 строк, поездка дочитывается, и ответ — `404 trip_not_found` или `409 trip_completed`:
-
-```go
-if tag.RowsAffected() == 0 {
-    found, readErr := r.Get(ctx, id)
-    if readErr != nil {
-        return trip.Trip{}, readErr
-    }
-    if found.Status == "completed" {
-        return trip.Trip{}, trip.ErrCompleted
-    }
-    return trip.Trip{}, fmt.Errorf("поездка нашлась, но закрыть её не вышло")
-}
-```
+| Проблема | Мутанты | Что сделал |
+|---|---|---|
+| не покрыт `FieldError.Error` | 2 не покрыто | `TestFieldErrorText` |
+| `New`: не проверялись координаты | 4 выжило | проверка в `TestNew` |
+| `New`: не проверялся `UpdatedAt` | 1 выжил | проверка в `TestNew` |
+| `create`: не проверялись координаты | 1 выжил | проверка в `TestCreate` |
