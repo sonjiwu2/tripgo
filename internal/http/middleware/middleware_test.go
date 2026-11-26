@@ -99,6 +99,23 @@ func TestMetricsUsesRouteTemplate(t *testing.T) {
 	}
 }
 
+func TestUnknownRouteUsesStableName(t *testing.T) {
+	router := chi.NewRouter()
+	var got string
+	router.Use(func(next http.Handler) http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			next.ServeHTTP(w, r)
+			got = Pattern(r)
+		})
+	})
+	router.Get("/health", func(http.ResponseWriter, *http.Request) {})
+	req := httptest.NewRequest(http.MethodGet, "/missing/"+uuid.NewString(), nil)
+	router.ServeHTTP(httptest.NewRecorder(), req)
+	if got != unknownRoute || matchPattern(router, req) != unknownRoute {
+		t.Fatalf("route %q, want %q", got, unknownRoute)
+	}
+}
+
 func TestRecover(t *testing.T) {
 	log := slog.New(slog.DiscardHandler)
 	handler := Recover(log)(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {

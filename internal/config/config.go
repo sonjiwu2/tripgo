@@ -10,10 +10,12 @@ import (
 )
 
 type Config struct {
-	HTTP HTTP
-	Log  Log
-	DB   DB
-	OTEL OTEL
+	HTTP     HTTP
+	Log      Log
+	DB       DB
+	OTEL     OTEL
+	Position Position
+	Push     Push
 }
 
 type HTTP struct {
@@ -41,6 +43,19 @@ type DB struct {
 type OTEL struct {
 	ServiceName string
 	Protocol    string
+}
+
+type Position struct {
+	CheckInterval time.Duration
+	StaleAfter    time.Duration
+	Workers       int
+	QueueSize     int
+	ScanBatchSize int
+}
+
+type Push struct {
+	URL     string
+	Timeout time.Duration
 }
 
 type settings struct {
@@ -73,6 +88,17 @@ func Load() (Config, error) {
 			ServiceName: src.text("OTEL_SERVICE_NAME"),
 			Protocol:    src.text("OTEL_EXPORTER_OTLP_PROTOCOL"),
 		},
+		Position: Position{
+			CheckInterval: src.duration("POSITION_CHECK_INTERVAL", "30s"),
+			StaleAfter:    src.duration("POSITION_STALE_AFTER", "60s"),
+			Workers:       int(src.count("POSITION_WORKERS", "4")),
+			QueueSize:     int(src.count("POSITION_QUEUE_SIZE", "100")),
+			ScanBatchSize: int(src.count("POSITION_SCAN_BATCH_SIZE", "100")),
+		},
+		Push: Push{
+			URL:     src.text("PUSH_HTTP_URL"),
+			Timeout: src.duration("PUSH_REQUEST_TIMEOUT", "1s"),
+		},
 	}
 	src.text("OTEL_EXPORTER_OTLP_ENDPOINT")
 	src.text("OTEL_RESOURCE_ATTRIBUTES")
@@ -104,11 +130,14 @@ func Load() (Config, error) {
 	return cfg, nil
 }
 
-func (s *settings) text(name string) string {
+func (s *settings) text(name string, fallback ...string) string {
 	if s.err != nil {
 		return ""
 	}
 	v := strings.TrimSpace(os.Getenv(name))
+	if v == "" && len(fallback) != 0 {
+		return fallback[0]
+	}
 	if v == "" {
 		s.err = fmt.Errorf("не задана переменная %s", name)
 		return ""
@@ -116,8 +145,8 @@ func (s *settings) text(name string) string {
 	return v
 }
 
-func (s *settings) duration(name string) time.Duration {
-	raw := s.text(name)
+func (s *settings) duration(name string, fallback ...string) time.Duration {
+	raw := s.text(name, fallback...)
 	if s.err != nil {
 		return 0
 	}
@@ -133,8 +162,8 @@ func (s *settings) duration(name string) time.Duration {
 	return d
 }
 
-func (s *settings) count(name string) int32 {
-	raw := s.text(name)
+func (s *settings) count(name string, fallback ...string) int32 {
+	raw := s.text(name, fallback...)
 	if s.err != nil {
 		return 0
 	}

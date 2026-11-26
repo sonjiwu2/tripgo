@@ -7,6 +7,9 @@ import (
 	"sync"
 
 	"github.com/sonjiwu2/tripgo/internal/config"
+	"github.com/sonjiwu2/tripgo/internal/gateway/push"
+	poslist "github.com/sonjiwu2/tripgo/internal/http/position/list"
+	possave "github.com/sonjiwu2/tripgo/internal/http/position/save"
 	"github.com/sonjiwu2/tripgo/internal/http/probe"
 	"github.com/sonjiwu2/tripgo/internal/http/router"
 	triphttp "github.com/sonjiwu2/tripgo/internal/http/trip/create"
@@ -15,22 +18,27 @@ import (
 	"github.com/sonjiwu2/tripgo/internal/infra/postgres"
 	"github.com/sonjiwu2/tripgo/internal/infra/postgres/transaction"
 	"github.com/sonjiwu2/tripgo/internal/infra/telemetry"
+	positionrepo "github.com/sonjiwu2/tripgo/internal/repository/position"
 	triprepo "github.com/sonjiwu2/tripgo/internal/repository/trip"
+	poslistuc "github.com/sonjiwu2/tripgo/internal/usecase/position/list"
+	possaveuc "github.com/sonjiwu2/tripgo/internal/usecase/position/save"
 	tripcreate "github.com/sonjiwu2/tripgo/internal/usecase/trip/create"
 	tripfinish "github.com/sonjiwu2/tripgo/internal/usecase/trip/finish"
 	tripget "github.com/sonjiwu2/tripgo/internal/usecase/trip/get"
+	"github.com/sonjiwu2/tripgo/internal/worker/positions"
 )
 
 type App struct {
-	Server *http.Server
-	Log    *slog.Logger
+	Server    *http.Server
+	Log       *slog.Logger
+	positions *positions.Pool
 
 	once  sync.Once
 	err   error
 	close func(context.Context) error
 }
 
-func New(ctx context.Context, cfg config.Config) (*App, error) {
+func New(ctx, work context.Context, cfg config.Config) (*App, error) {
 	log := telemetry.NewLogger(cfg.Log.Level, cfg.OTEL.ServiceName)
 	shutdown, err := telemetry.Setup(ctx, cfg.OTEL)
 	if err != nil {
@@ -40,13 +48,13 @@ func New(ctx context.Context, cfg config.Config) (*App, error) {
 
 	meters, err := telemetry.NewMeters()
 	if err != nil {
-		_ = shutdown(context.Background())
+		_ = shutdown(ctx)
 		return nil, err
 	}
 
 	pool, err := postgres.NewPool(ctx, cfg.DB)
 	if err != nil {
-		_ = shutdown(context.Background())
+		_ = shutdown(ctx)
 		return nil, err
 	}
 
@@ -54,20 +62,39 @@ func New(ctx context.Context, cfg config.Config) (*App, error) {
 	if err = telemetry.WatchActive(log, repo); err != nil {
 		log.Error("счётчик активных поездок не включился", "err", err)
 	}
+	points := positionrepo.New(pool, cfg.DB.QueryTimeout)
 
-	tx := transaction.NewTxManager(pool)
+	tx := transaction.NewTxManager(pool, cfg.DB.QueryTimeout)
 	created := tripcreate.New(repo, tx, log, meters.Created)
 	finished := tripfinish.New(repo, tx, log, meters.Completed)
 	loaded := tripget.New(repo)
+	saved := possaveuc.New(points, tx, meters.PositionsSaved)
+	listed := poslistuc.New(points, repo)
+	gateway := push.New(cfg.Push.URL, cfg.Push.Timeout)
+	poller := positions.New(log, points, gateway, positions.Config{
+		Interval:    cfg.Position.CheckInterval,
+		Stale:       cfg.Position.StaleAfter,
+		Workers:     cfg.Position.Workers,
+		Queue:       cfg.Position.QueueSize,
+		BatchSize:   cfg.Position.ScanBatchSize,
+		PushTimeout: cfg.Push.Timeout,
+	}, meters.StaleChecks, meters.PositionRequests, meters.PositionDuration, meters.RowsRead)
+	if err = telemetry.WatchPositions(poller); err != nil {
+		log.Error("метрики опроса координат не включились", "err", err)
+	}
+	poller.Start(work)
 	handler := router.New(
 		triphttp.NewHandler(created, log),
 		gethttp.NewHandler(loaded, log),
 		finishhttp.NewHandler(finished, log),
+		possave.NewHandler(saved, poller, log),
+		poslist.NewHandler(listed, log),
 		probe.New(pool, cfg.DB.QueryTimeout),
 	)
 
 	return &App{
-		Log: log,
+		Log:       log,
+		positions: poller,
 		Server: &http.Server{
 			Addr:              cfg.HTTP.Addr,
 			Handler:           router.Routes(handler, log, meters.HTTPDuration, meters.HTTPActive),
@@ -77,10 +104,19 @@ func New(ctx context.Context, cfg config.Config) (*App, error) {
 			IdleTimeout:       cfg.HTTP.IdleTimeout,
 		},
 		close: func(ctx context.Context) error {
+			err := shutdown(ctx)
+			gateway.Close()
 			pool.Close()
-			return shutdown(ctx)
+			return err
 		},
 	}, nil
+}
+
+func (a *App) Stop(ctx context.Context) error {
+	if a.positions == nil {
+		return nil
+	}
+	return a.positions.Stop(ctx)
 }
 
 func (a *App) Close(ctx context.Context) error {

@@ -7,7 +7,7 @@ generate:
 	go tool oapi-codegen \
 		-generate types,chi-server \
 		-package api \
-		-include-operation-ids createTrip,getTrip,finishTrip,health,ready \
+		-include-operation-ids createTrip,getTrip,finishTrip,createTripPosition,listTripPositions,health,ready \
 		-o api/api.gen.go \
 		contracts/openapi/trip-service.openapi.yaml
 	go generate ./...
@@ -27,7 +27,7 @@ test:
 	go tool cover -func=cover.out | grep total
 
 test-integration:
-	$(load_env) go test -race -tags=integration ./internal/repository/trip/
+	$(load_env) go test -race -p 1 -tags=integration ./internal/repository/...
 
 lint:
 	$(load_env) golangci-lint run ./...

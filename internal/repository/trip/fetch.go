@@ -15,7 +15,7 @@ func (r *Repo) Find(ctx context.Context, id string) (domaintrip.Trip, error) {
 	query, args, err := sqlb.Select(
 		"id", "user_id", "driver_id",
 		"start_latitude", "start_longitude", "end_latitude", "end_longitude",
-		"price", "status", "started_at", "finished_at", "created_at", "updated_at",
+		"price", "status", "started_at", "finished_at", "created_at", "updated_at", "last_position_at",
 	).From("trips").Where("id = ?", id).ToSql()
 	if err != nil {
 		return domaintrip.Trip{}, err
@@ -25,7 +25,7 @@ func (r *Repo) Find(ctx context.Context, id string) (domaintrip.Trip, error) {
 	err = r.load(ctx, query, args...).Scan(
 		&found.ID, &found.UserID, &found.DriverID,
 		&found.StartLatitude, &found.StartLongitude, &found.EndLatitude, &found.EndLongitude,
-		&found.Price, &found.Status, &found.StartedAt, &found.FinishedAt, &found.CreatedAt, &found.UpdatedAt,
+		&found.Price, &found.Status, &found.StartedAt, &found.FinishedAt, &found.CreatedAt, &found.UpdatedAt, &found.LastPositionAt,
 	)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return domaintrip.Trip{}, domaintrip.ErrTripNotFound

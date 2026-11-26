@@ -51,7 +51,7 @@ func TestSaveRollsBackBothTables(t *testing.T) {
 	ctx := context.Background()
 	pool := openPool(t)
 	repo := trip.New(pool, 3*time.Second)
-	tx := transaction.NewTxManager(pool)
+	tx := transaction.NewTxManager(pool, 3*time.Second)
 	item := newTrip(t)
 	t.Cleanup(func() { dropTrip(t, pool, item.ID) })
 
@@ -76,7 +76,7 @@ func TestSaveWritesTripAndHistory(t *testing.T) {
 	ctx := context.Background()
 	pool := openPool(t)
 	repo := trip.New(pool, 3*time.Second)
-	tx := transaction.NewTxManager(pool)
+	tx := transaction.NewTxManager(pool, 3*time.Second)
 	item := newTrip(t)
 	t.Cleanup(func() { dropTrip(t, pool, item.ID) })
 

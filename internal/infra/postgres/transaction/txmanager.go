@@ -14,11 +14,12 @@ type TxManager interface {
 }
 
 type manager struct {
-	pool *pgxpool.Pool
+	pool    *pgxpool.Pool
+	timeout time.Duration
 }
 
-func NewTxManager(pool *pgxpool.Pool) TxManager {
-	return &manager{pool: pool}
+func NewTxManager(pool *pgxpool.Pool, timeout time.Duration) TxManager {
+	return &manager{pool: pool, timeout: timeout}
 }
 
 type txKey struct{}
@@ -28,7 +29,9 @@ func (m *manager) Do(ctx context.Context, fn func(ctx context.Context) error) er
 		return fn(ctx)
 	}
 
-	tx, err := m.pool.BeginTx(ctx, pgx.TxOptions{IsoLevel: pgx.ReadCommitted})
+	beginCtx, cancelBegin := context.WithTimeout(ctx, m.timeout)
+	tx, err := m.pool.BeginTx(beginCtx, pgx.TxOptions{IsoLevel: pgx.ReadCommitted})
+	cancelBegin()
 	if err != nil {
 		return fmt.Errorf("не удалось начать транзакцию: %w", err)
 	}
@@ -38,7 +41,7 @@ func (m *manager) Do(ctx context.Context, fn func(ctx context.Context) error) er
 		if committed {
 			return
 		}
-		rollbackCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
+		rollbackCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), m.timeout)
 		defer cancel()
 		_ = tx.Rollback(rollbackCtx)
 	}()
@@ -48,7 +51,9 @@ func (m *manager) Do(ctx context.Context, fn func(ctx context.Context) error) er
 		return err
 	}
 
-	err = tx.Commit(ctx)
+	commitCtx, cancelCommit := context.WithTimeout(ctx, m.timeout)
+	defer cancelCommit()
+	err = tx.Commit(commitCtx)
 	if err != nil {
 		return fmt.Errorf("не удалось зафиксировать транзакцию: %w", err)
 	}
